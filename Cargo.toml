@@ -1,0 +1,52 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/hugener/Stagehand"
+publish = false
+
+[workspace.dependencies]
+stagehand-core = { path = "crates/stagehand-core" }
+stagehand-platform = { path = "crates/stagehand-platform" }
+stagehand-laser-pointer = { path = "crates/laser-pointer" }
+stagehand-presenter-window = { path = "crates/presenter-window" }
+stagehand-taskbar-switch = { path = "crates/taskbar-switch" }
+
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Only the software renderer is built in. A settings window does not need a GPU, and a
+# background app should not hold a graphics context; the OpenGL renderer also drew
+# the window blank on the machine this was developed on.
+slint = { version = "1.18", default-features = false, features = [
+    "std",
+    "compat-1-2",
+    "backend-winit",
+    "renderer-software",
+    "accessibility",
+    "system-tray",
+    "unstable-winit-030",
+] }
+slint-build = "1.18"
+# Builds the icon into stagehand.exe.
+winresource = "0.1"
+windows = "0.62"
+# The vector type Direct2D takes its points in; the same version `windows` itself uses.
+windows-numerics = "0.3"
+windows-registry = "0.6"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

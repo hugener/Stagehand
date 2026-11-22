@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160">
+  <!-- Stagehand's logo: a hand reaching in from the corner to help. -->
+  <defs>
+    <clipPath id="tile">
+      <rect width="160" height="160" rx="36"/>
+    </clipPath>
+  </defs>
+  <rect width="160" height="160" rx="36" fill="#5b5fc7"/>
+  <g clip-path="url(#tile)">
+    <g transform="translate(-2 -6) rotate(-38 80 80)" fill="#ffffff">
+      <!-- The arm, a little wider at the top than at the wrist. -->
+      <path d="M59 -70 L101 -70 L98 56 L62 56 Z"/>
+      <!-- The palm. -->
+      <rect x="48" y="36" width="64" height="58" rx="24"/>
+      <!-- The fingers, fanned out slightly: little, ring, middle and index. -->
+      <rect x="48" y="66" width="14.5" height="52" rx="7.25" transform="rotate(7 55 70)"/>
+      <rect x="64.5" y="70" width="14.5" height="62" rx="7.25" transform="rotate(2.5 72 74)"/>
+      <rect x="81" y="70" width="14.5" height="66" rx="7.25" transform="rotate(-1.5 88 74)"/>
+      <rect x="97.5" y="66" width="14.5" height="58" rx="7.25" transform="rotate(-6 105 70)"/>
+      <!-- The thumb, held away from the palm. -->
+      <rect x="101" y="52" width="17" height="48" rx="8.5" transform="rotate(-42 110 60)"/>
+    </g>
+  </g>
+</svg>

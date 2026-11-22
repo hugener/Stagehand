@@ -1,0 +1,15 @@
+[package]
+name = "stagehand-core"
+description = "Plugin contract, plugin host and settings storage for Stagehand"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

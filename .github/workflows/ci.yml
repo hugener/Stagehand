@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  windows:
+    name: Windows ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+          - arch: arm64
+            runner: windows-11-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --locked
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - name: Build release
+        run: cargo build --release --locked -p stagehand
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: stagehand-windows-${{ matrix.arch }}
+          path: target/release/stagehand.exe
+          if-no-files-found: error
+
+      # Unsigned, with a placeholder identity: it shows that the package still builds.
+      # A Store release is packaged with the identity from Partner Center.
+      - name: Package
+        shell: pwsh
+        run: packaging/build-msix.ps1 -SkipBuild -Architecture ${{ matrix.arch }}
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: stagehand-msix-${{ matrix.arch }}
+          path: target/msix/*.msix
+          if-no-files-found: error

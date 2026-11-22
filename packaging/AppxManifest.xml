@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The package manifest for the Microsoft Store build. The values in double braces are
+  filled in by build-msix.ps1.
+
+  Stagehand is an ordinary desktop program, so it runs with full trust: its tools need a
+  system-wide mouse hook, shortcuts and windows over other applications, none of which
+  a sandboxed app is allowed.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap desktop rescap">
+
+  <Identity
+    Name="{{IdentityName}}"
+    Publisher="{{Publisher}}"
+    Version="{{Version}}"
+    ProcessorArchitecture="{{Architecture}}" />
+
+  <Properties>
+    <DisplayName>Stagehand</DisplayName>
+    <PublisherDisplayName>{{PublisherDisplayName}}</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <!-- Windows 10 version 2004, the first with everything the Presenter Window uses. -->
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <Application Id="Stagehand" Executable="stagehand.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="Stagehand"
+        Description="Small desktop tools that stay out of the way: a laser pointer, a shareable presenter window and more."
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png" />
+
+      <Extensions>
+        <!--
+          Starting at sign-in. Off until the user switches it on in Stagehand's settings;
+          the task id is the one crates/stagehand-platform/src/package.rs asks for.
+        -->
+        <desktop:Extension Category="windows.startupTask" Executable="stagehand.exe" EntryPoint="Windows.FullTrustApplication">
+          <desktop:StartupTask TaskId="StagehandStartup" Enabled="false" DisplayName="Stagehand" />
+        </desktop:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+    <!-- Lets the Presenter Window mirror a window without Windows outlining it in yellow. -->
+    <rescap:Capability Name="graphicsCaptureWithoutBorder" />
+  </Capabilities>
+</Package>

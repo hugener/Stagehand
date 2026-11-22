@@ -1,0 +1,27 @@
+[package]
+name = "stagehand-platform"
+description = "Operating system integration for Stagehand"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "ApplicationModel",
+    "ApplicationModel_Activation",
+    "Foundation",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_Packaging_Appx",
+    "Win32_System_LibraryLoader",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_UI_HiDpi",
+    "Win32_UI_WindowsAndMessaging",
+] }
+windows-registry.workspace = true
+
+[lints]
+workspace = true

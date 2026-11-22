@@ -1,0 +1,1302 @@
+import { AboutSlint, ComboBox, Palette, ScrollView } from "std-widgets.slint";
+
+export struct PluginEntry {
+    id: string,
+    name: string,
+    description: string,
+    enabled: bool,
+    supported: bool,
+}
+
+export struct TaskbarSwitchOptions {
+    // Positions in the list of placements below.
+    keyboard-placement: int,
+    tablet-placement: int,
+    apply-on-start: bool,
+}
+
+export struct ShortcutOptions {
+    win: bool,
+    ctrl: bool,
+    alt: bool,
+    shift: bool,
+    // Position in the list of keys the application supplies; the first one is "None".
+    key: int,
+}
+
+export struct LaserPointerOptions {
+    mouse-shortcut: ShortcutOptions,
+    pen-shortcut: ShortcutOptions,
+    // Position in the list of buttons below.
+    activation-button: int,
+    // Position in the list of always-on buttons below; the first one is "None".
+    always-on-button: int,
+    suppress-activation-button: bool,
+    auto-activate: bool,
+    glow-enabled: bool,
+    pen-render-when-close: bool,
+    // Without its opacity, which is kept separately.
+    color: color,
+    opacity-percent: int,
+    size: int,
+    decay-time-ms: int,
+    decay-length: int,
+    streamline-percent: int,
+}
+
+export struct PresenterWindowOptions {
+    share-shortcut: ShortcutOptions,
+    stop-shortcut: ShortcutOptions,
+}
+
+// The shortcut that is being recorded, if any. The application listens for the keys,
+// because a shortcut with the Windows key never reaches the window, and writes the
+// result into the settings itself.
+export global ShortcutRecording {
+    // Which shortcut is being recorded; empty when none is.
+    in property <string> target;
+    // The modifier keys held down right now.
+    in property <ShortcutOptions> held;
+    // Why the keys just pressed were not taken.
+    in property <string> hint;
+    callback start(target: string);
+    callback stop();
+}
+
+// The look of the window: the colours and sizes of Microsoft Teams, light and dark.
+global Theme {
+    out property <bool> dark: Palette.color-scheme == ColorScheme.dark;
+    out property <color> brand: root.dark ? #7f85f5 : #5b5fc7;
+    out property <color> brand-hover: root.dark ? #9299f7 : #4f52b2;
+    out property <color> on-brand: root.dark ? #1f1f1f : #ffffff;
+    // The side list, and the pane the settings are on.
+    out property <color> side: root.dark ? #1f1f1f : #f5f5f5;
+    out property <color> surface: root.dark ? #292929 : #ffffff;
+    out property <color> selected: root.dark ? #3d3d3d : #ffffff;
+    out property <color> hover: root.dark ? #333333 : #ebebeb;
+    out property <color> divider: root.dark ? #3d3d3d : #e0e0e0;
+    out property <color> control-border: root.dark ? #adadad : #616161;
+    out property <color> rail: root.dark ? #5c5c5c : #c7c7c7;
+    out property <color> text: root.dark ? #ffffff : #242424;
+    out property <color> text-secondary: root.dark ? #adadad : #616161;
+    out property <color> key-cap: root.dark ? #3d3d3d : #f0f0f0;
+    out property <length> radius: 4px;
+}
+
+component Label inherits Text {
+    color: Theme.text;
+    font-size: 14px;
+    vertical-alignment: center;
+}
+
+component Note inherits Text {
+    color: Theme.text-secondary;
+    font-size: 12px;
+    wrap: word-wrap;
+}
+
+component SectionTitle inherits Text {
+    color: Theme.text;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+component Divider inherits Rectangle {
+    height: 1px;
+    background: Theme.divider;
+}
+
+// A switch as Teams draws it: an outlined pill that fills with the brand colour.
+component Toggle inherits Rectangle {
+    in property <string> label;
+    in property <bool> checked;
+    in property <bool> enabled: true;
+    callback toggled(checked: bool);
+
+    width: 40px;
+    height: 20px;
+    border-radius: 10px;
+    background: root.checked ? (touch.has-hover ? Theme.brand-hover : Theme.brand) : transparent;
+    border-width: root.checked ? 0px : 1px;
+    border-color: Theme.control-border;
+    opacity: root.enabled ? 1 : 0.4;
+    accessible-role: switch;
+    accessible-label: root.label;
+    accessible-checkable: true;
+    accessible-checked: root.checked;
+    accessible-enabled: root.enabled;
+    accessible-action-default => {
+        root.toggled(!root.checked);
+    }
+
+    // Shown around the switch while the keyboard is on it.
+    Rectangle {
+        x: -3px;
+        y: -3px;
+        width: parent.width + 6px;
+        height: parent.height + 6px;
+        border-radius: 13px;
+        border-width: scope.has-focus ? 2px : 0px;
+        border-color: Theme.text;
+    }
+
+    Rectangle {
+        x: root.checked ? parent.width - self.width - 4px : 4px;
+        y: (parent.height - self.height) / 2;
+        width: 12px;
+        height: 12px;
+        border-radius: 6px;
+        background: root.checked ? Theme.on-brand : Theme.control-border;
+        animate x {
+            duration: 120ms;
+            easing: ease-out;
+        }
+    }
+
+    scope := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == " " || event.text == Key.Return {
+                root.toggled(!root.checked);
+                return accept;
+            }
+            reject
+        }
+
+        touch := TouchArea {
+            enabled: root.enabled;
+            mouse-cursor: pointer;
+            clicked => {
+                scope.focus();
+                root.toggled(!root.checked);
+            }
+        }
+    }
+}
+
+// A slider in the brand colour. It does not keep the value itself: it says where the
+// user dragged to and shows whatever it is then given.
+component BrandSlider inherits Rectangle {
+    in property <string> label;
+    in property <float> minimum;
+    in property <float> maximum: 100;
+    in property <float> step: 1;
+    in property <float> value;
+    callback moved(value: float);
+    // The user let go, or changed the value with the keyboard.
+    callback released();
+
+    property <length> thumb: 20px;
+    property <length> travel: self.width - self.thumb;
+    property <float> fraction: root.maximum > root.minimum ? clamp((root.value - root.minimum) / (root.maximum - root.minimum), 0, 1) : 0;
+
+    function drag-to(x: length) {
+        root.moved(root.minimum + clamp((x - root.thumb / 2) / root.travel, 0, 1) * (root.maximum - root.minimum));
+    }
+
+    function nudge(by: float) {
+        root.moved(clamp(root.value + by, root.minimum, root.maximum));
+        root.released();
+    }
+
+    height: 32px;
+    min-width: 120px;
+    accessible-role: slider;
+    accessible-label: root.label;
+    accessible-value: root.value;
+    accessible-value-minimum: root.minimum;
+    accessible-value-maximum: root.maximum;
+    accessible-value-step: root.step;
+    accessible-action-increment => {
+        root.nudge(root.step);
+    }
+    accessible-action-decrement => {
+        root.nudge(-root.step);
+    }
+
+    Rectangle {
+        x: root.thumb / 2;
+        y: (parent.height - self.height) / 2;
+        width: root.travel;
+        height: 4px;
+        border-radius: 2px;
+        background: Theme.rail;
+    }
+
+    Rectangle {
+        x: root.thumb / 2;
+        y: (parent.height - self.height) / 2;
+        width: root.travel * root.fraction;
+        height: 4px;
+        border-radius: 2px;
+        background: Theme.brand;
+    }
+
+    Rectangle {
+        x: root.travel * root.fraction;
+        y: (parent.height - self.height) / 2;
+        width: root.thumb;
+        height: root.thumb;
+        border-radius: root.thumb / 2;
+        background: Theme.surface;
+        border-width: scope.has-focus ? 2px : 1px;
+        border-color: scope.has-focus ? Theme.text : Theme.rail;
+
+        Rectangle {
+            width: touch.pressed ? 10px : 12px;
+            height: self.width;
+            border-radius: self.width / 2;
+            background: touch.has-hover || touch.pressed ? Theme.brand-hover : Theme.brand;
+        }
+    }
+
+    scope := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.RightArrow || event.text == Key.UpArrow {
+                root.nudge(root.step);
+                return accept;
+            }
+            if event.text == Key.LeftArrow || event.text == Key.DownArrow {
+                root.nudge(-root.step);
+                return accept;
+            }
+            reject
+        }
+
+        touch := TouchArea {
+            pointer-event(event) => {
+                if event.button == PointerEventButton.left {
+                    if event.kind == PointerEventKind.down {
+                        scope.focus();
+                        root.drag-to(self.mouse-x);
+                    } else if event.kind == PointerEventKind.up {
+                        root.released();
+                    }
+                }
+            }
+            moved => {
+                if self.pressed {
+                    root.drag-to(self.mouse-x);
+                }
+            }
+        }
+    }
+}
+
+component SubtleButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    height: 32px;
+    min-width: label.preferred-width + 24px;
+    horizontal-stretch: 0;
+    border-radius: Theme.radius;
+    border-width: scope.has-focus ? 2px : 1px;
+    border-color: scope.has-focus ? Theme.text : Theme.divider;
+    background: touch.has-hover && root.enabled ? Theme.hover : Theme.surface;
+    opacity: root.enabled ? 1 : 0.4;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-action-default => {
+        root.clicked();
+    }
+
+    label := Label {
+        text: root.text;
+        horizontal-alignment: center;
+    }
+
+    scope := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == " " || event.text == Key.Return {
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+
+        touch := TouchArea {
+            enabled: root.enabled;
+            clicked => {
+                root.clicked();
+            }
+        }
+    }
+}
+
+// One setting: what it is on the left, the control for it on the right.
+component SettingRow inherits HorizontalLayout {
+    in property <string> title;
+    in property <string> description;
+
+    spacing: 16px;
+    min-height: 36px;
+
+    VerticalLayout {
+        alignment: center;
+        horizontal-stretch: 1;
+        spacing: 2px;
+
+        Label {
+            text: root.title;
+            wrap: word-wrap;
+        }
+
+        if root.description != "": Note {
+            text: root.description;
+        }
+    }
+
+    VerticalLayout {
+        alignment: center;
+        horizontal-stretch: 0;
+
+        @children
+    }
+}
+
+component SwitchRow inherits SettingRow {
+    in property <bool> checked;
+    in property <bool> enabled: true;
+    callback toggled(checked: bool);
+
+    Toggle {
+        label: root.title;
+        checked: root.checked;
+        enabled: root.enabled;
+        toggled(checked) => {
+            root.toggled(checked);
+        }
+    }
+}
+
+component ChoiceRow inherits SettingRow {
+    in property <[string]> choices;
+    in property <int> choice;
+    callback chosen(choice: int);
+
+    ComboBox {
+        accessible-label: root.title;
+        width: 220px;
+        model: root.choices;
+        current-index: root.choice;
+        selected => {
+            root.chosen(self.current-index);
+        }
+    }
+}
+
+component SliderRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> unit;
+    in property <int> minimum;
+    in property <int> maximum;
+    in property <int> step: 1;
+    in-out property <int> value;
+    // Only when the slider is let go of, so dragging does not save on every pixel.
+    callback committed(value: int);
+
+    spacing: 12px;
+    min-height: 36px;
+
+    Label {
+        text: root.label;
+        min-width: 150px;
+    }
+
+    BrandSlider {
+        label: root.label;
+        horizontal-stretch: 1;
+        minimum: root.minimum;
+        maximum: root.maximum;
+        step: root.step;
+        value: root.value;
+        moved(value) => {
+            root.value = round(value / root.step) * root.step;
+        }
+        released => {
+            root.committed(root.value);
+        }
+    }
+
+    Label {
+        text: root.value + root.unit;
+        horizontal-alignment: right;
+        min-width: 64px;
+    }
+}
+
+component Swatch inherits Rectangle {
+    in property <string> name;
+    in property <color> swatch;
+    in property <bool> selected;
+    callback clicked();
+
+    width: 28px;
+    height: 28px;
+    border-radius: 14px;
+    border-width: root.selected ? 2px : 0px;
+    border-color: Theme.brand;
+    accessible-role: button;
+    accessible-label: root.name;
+    accessible-action-default => {
+        root.clicked();
+    }
+
+    Rectangle {
+        width: root.selected ? 18px : 24px;
+        height: self.width;
+        border-radius: self.width / 2;
+        background: root.swatch;
+        border-width: 1px;
+        border-color: Theme.divider;
+    }
+
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component KeyCap inherits Rectangle {
+    in property <string> text;
+
+    height: 24px;
+    min-width: max(24px, label.preferred-width + 14px);
+    horizontal-stretch: 0;
+    border-radius: Theme.radius;
+    background: Theme.key-cap;
+    border-width: 1px;
+    border-color: Theme.divider;
+
+    label := Text {
+        text: root.text;
+        color: Theme.text;
+        font-size: 12px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// Shows a shortcut as key caps. Clicking it records a new one: the keys are simply
+// pressed, and Esc leaves the shortcut as it was.
+component ShortcutRecorder inherits VerticalLayout {
+    in property <string> label;
+    in property <string> description;
+    // The name the application knows this shortcut by.
+    in property <string> target;
+    in property <[string]> keys;
+    in property <ShortcutOptions> shortcut;
+    callback cleared();
+
+    property <bool> recording: ShortcutRecording.target == root.target;
+    property <ShortcutOptions> shown: root.recording ? ShortcutRecording.held : root.shortcut;
+    property <bool> empty: !root.shown.win && !root.shown.ctrl && !root.shown.alt && !root.shown.shift && root.shown.key == 0;
+
+    spacing: 4px;
+
+    SettingRow {
+        title: root.label;
+        description: root.description;
+
+        HorizontalLayout {
+            spacing: 8px;
+
+            Rectangle {
+                width: 230px;
+                height: 36px;
+                border-radius: Theme.radius;
+                border-width: root.recording || scope.has-focus ? 2px : 1px;
+                border-color: root.recording ? Theme.brand : scope.has-focus ? Theme.text : Theme.divider;
+                background: touch.has-hover && !root.recording ? Theme.hover : Theme.surface;
+                accessible-role: button;
+                accessible-label: root.label;
+                accessible-description: root.recording ? "Recording. Press the shortcut, or Esc to cancel." : "Press to record a new shortcut.";
+                accessible-action-default => {
+                    ShortcutRecording.start(root.target);
+                }
+
+                scope := FocusScope {
+                    key-pressed(event) => {
+                        // While recording, the keys go to the application instead.
+                        if event.text == " " || event.text == Key.Return {
+                            ShortcutRecording.start(root.target);
+                            return accept;
+                        }
+                        reject
+                    }
+                    changed has-focus => {
+                        if !self.has-focus && root.recording {
+                            ShortcutRecording.stop();
+                        }
+                    }
+
+                    touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            scope.focus();
+                            if root.recording {
+                                ShortcutRecording.stop();
+                            } else {
+                                ShortcutRecording.start(root.target);
+                            }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 4px;
+                    padding-left: 8px;
+                    padding-right: 8px;
+
+                    if root.empty: Text {
+                        text: root.recording ? "Press a shortcut…" : "Not set";
+                        color: root.recording ? Theme.brand : Theme.text-secondary;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                    }
+
+                    if root.shown.win: VerticalLayout {
+                        alignment: center;
+                        KeyCap {
+                            text: "Win";
+                        }
+                    }
+
+                    if root.shown.ctrl: VerticalLayout {
+                        alignment: center;
+                        KeyCap {
+                            text: "Ctrl";
+                        }
+                    }
+
+                    if root.shown.alt: VerticalLayout {
+                        alignment: center;
+                        KeyCap {
+                            text: "Alt";
+                        }
+                    }
+
+                    if root.shown.shift: VerticalLayout {
+                        alignment: center;
+                        KeyCap {
+                            text: "Shift";
+                        }
+                    }
+
+                    if root.shown.key > 0: VerticalLayout {
+                        alignment: center;
+                        KeyCap {
+                            text: root.keys[root.shown.key];
+                        }
+                    }
+
+                    if root.recording && !root.empty: Text {
+                        text: "+ …";
+                        color: Theme.brand;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            SubtleButton {
+                text: "Clear";
+                enabled: root.shortcut.key > 0 && !root.recording;
+                clicked => {
+                    root.cleared();
+                }
+            }
+        }
+    }
+
+    if root.recording: Text {
+        text: ShortcutRecording.hint != "" ? ShortcutRecording.hint : "Press the keys together. Esc cancels.";
+        color: Theme.brand;
+        font-size: 12px;
+        horizontal-alignment: right;
+        wrap: word-wrap;
+    }
+}
+
+component TaskbarSwitchPage inherits VerticalLayout {
+    in-out property <TaskbarSwitchOptions> options;
+    callback changed(options: TaskbarSwitchOptions);
+
+    // In the order the application expects; the first one leaves the taskbar alone.
+    property <[string]> placements: ["Leave it where it is", "Bottom", "Top", "Left", "Right"];
+
+    spacing: 12px;
+
+    SectionTitle {
+        text: "Where the taskbar goes";
+    }
+
+    ChoiceRow {
+        title: "With a keyboard";
+        choices: root.placements;
+        choice: root.options.keyboard-placement;
+        chosen(choice) => {
+            root.options.keyboard-placement = choice;
+            root.changed(root.options);
+        }
+    }
+
+    ChoiceRow {
+        title: "As a tablet";
+        choices: root.placements;
+        choice: root.options.tablet-placement;
+        chosen(choice) => {
+            root.options.tablet-placement = choice;
+            root.changed(root.options);
+        }
+    }
+
+    SwitchRow {
+        title: "Also move the taskbar when Stagehand starts";
+        checked: root.options.apply-on-start;
+        toggled(checked) => {
+            root.options.apply-on-start = checked;
+            root.changed(root.options);
+        }
+    }
+}
+
+component LaserPointerPage inherits VerticalLayout {
+    in property <[string]> keys;
+    in-out property <LaserPointerOptions> options;
+    callback changed(options: LaserPointerOptions);
+
+    // In the order the application expects.
+    property <[string]> buttons: ["Left", "Right", "Middle", "Back (side button 1)", "Forward (side button 2)"];
+    property <[string]> always-on-buttons: ["None", "Middle", "Back (side button 1)", "Forward (side button 2)"];
+    property <[{name: string, value: color}]> colors: [
+        { name: "Red", value: #ff2d2d },
+        { name: "Orange", value: #ff9500 },
+        { name: "Yellow", value: #ffd60a },
+        { name: "Green", value: #34c759 },
+        { name: "Blue", value: #0a84ff },
+        { name: "Purple", value: #bf5af2 },
+        { name: "White", value: #ffffff },
+    ];
+
+    spacing: 12px;
+
+    SectionTitle {
+        text: "Shortcuts";
+    }
+
+    ShortcutRecorder {
+        label: "Turn the laser on or off";
+        description: "For drawing with the mouse.";
+        target: "laser-pointer.mouse";
+        keys: root.keys;
+        shortcut: root.options.mouse-shortcut;
+        cleared => {
+            root.options.mouse-shortcut = { key: 0 };
+            root.changed(root.options);
+        }
+    }
+
+    ShortcutRecorder {
+        label: "Turn the laser on or off for the pen";
+        description: "For drawing with a pen on the screen.";
+        target: "laser-pointer.pen";
+        keys: root.keys;
+        shortcut: root.options.pen-shortcut;
+        cleared => {
+            root.options.pen-shortcut = { key: 0 };
+            root.changed(root.options);
+        }
+    }
+
+    Divider { }
+
+    SectionTitle {
+        text: "Mouse";
+    }
+
+    ChoiceRow {
+        title: "Draw while holding";
+        description: "While the laser is on.";
+        choices: root.buttons;
+        choice: root.options.activation-button;
+        chosen(choice) => {
+            root.options.activation-button = choice;
+            root.changed(root.options);
+        }
+    }
+
+    ChoiceRow {
+        title: "Always draw while holding";
+        description: "Works even when the laser is off.";
+        choices: root.always-on-buttons;
+        choice: root.options.always-on-button;
+        chosen(choice) => {
+            root.options.always-on-button = choice;
+            root.changed(root.options);
+        }
+    }
+
+    SwitchRow {
+        title: "Keep the middle and side buttons from the app underneath";
+        checked: root.options.suppress-activation-button;
+        toggled(checked) => {
+            root.options.suppress-activation-button = checked;
+            root.changed(root.options);
+        }
+    }
+
+    SwitchRow {
+        title: "Turn the laser on for the mouse when Stagehand starts";
+        checked: root.options.auto-activate;
+        toggled(checked) => {
+            root.options.auto-activate = checked;
+            root.changed(root.options);
+        }
+    }
+
+    Divider { }
+
+    SectionTitle {
+        text: "Pen";
+    }
+
+    SwitchRow {
+        title: "Draw as soon as the pen is near the screen";
+        checked: root.options.pen-render-when-close;
+        toggled(checked) => {
+            root.options.pen-render-when-close = checked;
+            root.changed(root.options);
+        }
+    }
+
+    Divider { }
+
+    SectionTitle {
+        text: "Appearance";
+    }
+
+    SettingRow {
+        title: "Colour";
+
+        HorizontalLayout {
+            spacing: 6px;
+
+            for entry in root.colors: Swatch {
+                name: entry.name;
+                swatch: entry.value;
+                selected: root.options.color == entry.value;
+                clicked => {
+                    root.options.color = entry.value;
+                    root.changed(root.options);
+                }
+            }
+        }
+    }
+
+    SliderRow {
+        label: "Opacity";
+        unit: " %";
+        minimum: 10;
+        maximum: 100;
+        step: 5;
+        value: root.options.opacity-percent;
+        committed(value) => {
+            root.options.opacity-percent = value;
+            root.changed(root.options);
+        }
+    }
+
+    SwitchRow {
+        title: "Glow around the trail";
+        checked: root.options.glow-enabled;
+        toggled(checked) => {
+            root.options.glow-enabled = checked;
+            root.changed(root.options);
+        }
+    }
+
+    SliderRow {
+        label: "Thickness";
+        unit: " px";
+        minimum: 2;
+        maximum: 60;
+        value: root.options.size;
+        committed(value) => {
+            root.options.size = value;
+            root.changed(root.options);
+        }
+    }
+
+    SliderRow {
+        label: "Fades after";
+        unit: " ms";
+        minimum: 100;
+        maximum: 5000;
+        step: 100;
+        value: root.options.decay-time-ms;
+        committed(value) => {
+            root.options.decay-time-ms = value;
+            root.changed(root.options);
+        }
+    }
+
+    SliderRow {
+        label: "Trail length";
+        minimum: 2;
+        maximum: 200;
+        value: root.options.decay-length;
+        committed(value) => {
+            root.options.decay-length = value;
+            root.changed(root.options);
+        }
+    }
+
+    SliderRow {
+        label: "Smoothing";
+        unit: " %";
+        minimum: 0;
+        maximum: 95;
+        step: 5;
+        value: root.options.streamline-percent;
+        committed(value) => {
+            root.options.streamline-percent = value;
+            root.changed(root.options);
+        }
+    }
+}
+
+component PresenterWindowPage inherits VerticalLayout {
+    in property <[string]> keys;
+    in-out property <PresenterWindowOptions> options;
+    callback changed(options: PresenterWindowOptions);
+
+    spacing: 12px;
+
+    Note {
+        text: "Point at a window and press the share shortcut, then pick \"Presenter Window\" where your call asks what to share. Press it again over another window to switch without sharing anew. Both actions are also in the tray menu.";
+    }
+
+    SectionTitle {
+        text: "Shortcuts";
+    }
+
+    ShortcutRecorder {
+        label: "Share the window under the pointer";
+        target: "presenter-window.share";
+        keys: root.keys;
+        shortcut: root.options.share-shortcut;
+        cleared => {
+            root.options.share-shortcut = { key: 0 };
+            root.changed(root.options);
+        }
+    }
+
+    ShortcutRecorder {
+        label: "Stop sharing";
+        target: "presenter-window.stop";
+        keys: root.keys;
+        shortcut: root.options.stop-shortcut;
+        cleared => {
+            root.options.stop-shortcut = { key: 0 };
+            root.changed(root.options);
+        }
+    }
+}
+
+// One entry of the list on the left.
+component NavItem inherits Rectangle {
+    in property <string> text;
+    in property <bool> selected;
+    // Tools show whether they are switched on.
+    in property <bool> has-state;
+    in property <bool> on;
+    callback clicked();
+
+    height: 36px;
+    border-radius: Theme.radius;
+    background: root.selected ? Theme.selected : touch.has-hover ? Theme.hover : transparent;
+    border-width: scope.has-focus ? 2px : 0px;
+    border-color: Theme.text;
+    accessible-role: list-item;
+    accessible-label: root.has-state ? root.text + (root.on ? ", on" : ", off") : root.text;
+    accessible-item-selectable: true;
+    accessible-item-selected: root.selected;
+    accessible-action-default => {
+        root.clicked();
+    }
+
+    // The brand-coloured marker Teams puts beside the selected entry.
+    Rectangle {
+        x: 0;
+        y: (parent.height - self.height) / 2;
+        width: 3px;
+        height: root.selected ? 16px : 0px;
+        border-radius: 1.5px;
+        background: Theme.brand;
+        animate height {
+            duration: 120ms;
+            easing: ease-out;
+        }
+    }
+
+    scope := FocusScope {
+        key-pressed(event) => {
+            if event.text == " " || event.text == Key.Return {
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+
+        touch := TouchArea {
+            clicked => {
+                root.clicked();
+            }
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 12px;
+        spacing: 8px;
+
+        Text {
+            text: root.text;
+            color: Theme.text;
+            font-size: 14px;
+            font-weight: root.selected ? 600 : 400;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+
+        if root.has-state: VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
+
+            Rectangle {
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: root.on ? Theme.brand : transparent;
+                border-width: root.on ? 0px : 1px;
+                border-color: Theme.control-border;
+            }
+        }
+    }
+}
+
+component PageTitle inherits Text {
+    color: Theme.text;
+    font-size: 20px;
+    font-weight: 600;
+}
+
+export component SettingsWindow inherits Window {
+    in property <string> version;
+    in property <[PluginEntry]> plugins;
+    in property <bool> start-at-login;
+
+    callback start-at-login-toggled(enabled: bool);
+    callback plugin-toggled(id: string, enabled: bool);
+
+    in-out property <TaskbarSwitchOptions> taskbar-switch;
+    callback taskbar-switch-changed(options: TaskbarSwitchOptions);
+
+    // "None" followed by every key a shortcut can use.
+    in property <[string]> shortcut-keys;
+    in-out property <LaserPointerOptions> laser-pointer;
+    callback laser-pointer-changed(options: LaserPointerOptions);
+
+    in-out property <PresenterWindowOptions> presenter-window;
+    callback presenter-window-changed(options: PresenterWindowOptions);
+
+    // What the pane on the right shows: a position in the list of tools, or one of
+    // the two pages below.
+    property <int> page: root.general;
+    property <int> general: -1;
+    property <int> about: -2;
+
+    function show(page: int) {
+        if ShortcutRecording.target != "" {
+            ShortcutRecording.stop();
+        }
+        root.page = page;
+    }
+
+    title: "Stagehand";
+    preferred-width: 880px;
+    preferred-height: 640px;
+    min-width: 720px;
+    min-height: 360px;
+    background: Theme.surface;
+    default-font-family: "Segoe UI";
+    default-font-size: 14px;
+
+    HorizontalLayout {
+        Rectangle {
+            width: 220px;
+            background: Theme.side;
+
+            VerticalLayout {
+                padding: 8px;
+                padding-top: 16px;
+                spacing: 2px;
+
+                HorizontalLayout {
+                    padding-left: 14px;
+                    height: 36px;
+
+                    Text {
+                        text: "Settings";
+                        color: Theme.text;
+                        font-size: 18px;
+                        font-weight: 700;
+                    }
+                }
+
+                NavItem {
+                    text: "General";
+                    selected: root.page == root.general;
+                    clicked => {
+                        root.show(root.general);
+                    }
+                }
+
+                HorizontalLayout {
+                    padding-left: 14px;
+                    padding-bottom: 4px;
+                    height: 32px;
+
+                    Text {
+                        text: "Tools";
+                        color: Theme.text-secondary;
+                        font-size: 12px;
+                        vertical-alignment: bottom;
+                    }
+                }
+
+                for plugin[index] in root.plugins: NavItem {
+                    text: plugin.name;
+                    selected: root.page == index;
+                    has-state: true;
+                    on: plugin.enabled;
+                    clicked => {
+                        root.show(index);
+                    }
+                }
+
+                // Pushes "About" to the bottom of the list.
+                Rectangle {
+                    vertical-stretch: 1;
+                }
+
+                NavItem {
+                    text: "About";
+                    selected: root.page == root.about;
+                    clicked => {
+                        root.show(root.about);
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            width: 1px;
+            background: Theme.divider;
+        }
+
+        ScrollView {
+            horizontal-stretch: 1;
+            // The content is as wide as the pane and only ever scrolls up and down.
+            content-width: self.visible-width;
+
+            VerticalLayout {
+                alignment: start;
+                padding: 28px;
+                padding-top: 20px;
+                spacing: 16px;
+
+                if root.page == root.general: VerticalLayout {
+                    spacing: 16px;
+
+                    PageTitle {
+                        text: "General";
+                    }
+
+                    Divider { }
+
+                    SwitchRow {
+                        title: "Start Stagehand when I sign in";
+                        description: "It starts in the notification area, without opening this window.";
+                        checked: root.start-at-login;
+                        toggled(checked) => {
+                            root.start-at-login-toggled(checked);
+                        }
+                    }
+                }
+
+                if root.page >= 0 && root.page < root.plugins.length: VerticalLayout {
+                    property <PluginEntry> plugin: root.plugins[root.page];
+
+                    spacing: 16px;
+
+                    HorizontalLayout {
+                        spacing: 16px;
+
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 4px;
+
+                            PageTitle {
+                                text: plugin.name;
+                            }
+
+                            Text {
+                                text: plugin.supported ? plugin.description : "Not available on this device.";
+                                color: Theme.text-secondary;
+                                font-size: 14px;
+                                wrap: word-wrap;
+                            }
+                        }
+
+                        HorizontalLayout {
+                            horizontal-stretch: 0;
+                            spacing: 8px;
+
+                            Label {
+                                text: plugin.enabled ? "On" : "Off";
+                                color: Theme.text-secondary;
+                            }
+
+                            VerticalLayout {
+                                alignment: center;
+
+                                Toggle {
+                                    label: plugin.name;
+                                    enabled: plugin.supported;
+                                    checked: plugin.enabled;
+                                    toggled(checked) => {
+                                        root.plugin-toggled(plugin.id, checked);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Divider { }
+
+                    if plugin.supported && !plugin.enabled: Note {
+                        text: "Switch " + plugin.name + " on to change its settings.";
+                        font-size: 14px;
+                    }
+
+                    if plugin.id == "laser-pointer" && plugin.enabled: LaserPointerPage {
+                        keys: root.shortcut-keys;
+                        options <=> root.laser-pointer;
+                        changed(options) => {
+                            root.laser-pointer-changed(options);
+                        }
+                    }
+
+                    if plugin.id == "presenter-window" && plugin.enabled: PresenterWindowPage {
+                        keys: root.shortcut-keys;
+                        options <=> root.presenter-window;
+                        changed(options) => {
+                            root.presenter-window-changed(options);
+                        }
+                    }
+
+                    if plugin.id == "taskbar-switch" && plugin.enabled: TaskbarSwitchPage {
+                        options <=> root.taskbar-switch;
+                        changed(options) => {
+                            root.taskbar-switch-changed(options);
+                        }
+                    }
+                }
+
+                if root.page == root.about: VerticalLayout {
+                    spacing: 16px;
+
+                    PageTitle {
+                        text: "About";
+                    }
+
+                    Divider { }
+
+                    Label {
+                        text: "Stagehand " + root.version;
+                    }
+
+                    Note {
+                        text: "Small desktop tools that stay out of the way. Free and open source.";
+                        font-size: 14px;
+                    }
+
+                    // Slint's royalty-free licence asks for this widget on an About screen.
+                    AboutSlint {
+                        preferred-height: 120px;
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component Tray inherits SystemTrayIcon {
+    in property <image> app-icon;
+
+    callback open-settings();
+    callback share-window();
+    callback stop-sharing();
+    callback quit();
+
+    icon: root.app-icon;
+    tooltip: "Stagehand";
+    clicked => {
+        root.open-settings();
+    }
+
+    Menu {
+        MenuItem {
+            title: "Settings";
+            activated => {
+                root.open-settings();
+            }
+        }
+
+        MenuSeparator { }
+
+        MenuItem {
+            title: "Share the window in front";
+            activated => {
+                root.share-window();
+            }
+        }
+
+        MenuItem {
+            title: "Stop sharing";
+            activated => {
+                root.stop-sharing();
+            }
+        }
+
+        MenuSeparator { }
+
+        MenuItem {
+            title: "Quit Stagehand";
+            activated => {
+                root.quit();
+            }
+        }
+    }
+}

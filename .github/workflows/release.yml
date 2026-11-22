@@ -1,0 +1,113 @@
+name: Release
+
+# Publishing a release on GitHub builds Stagehand for both architectures and attaches
+# the results to that release. Running it by hand does the same build without attaching
+# anything, which is how to check that a release will work before making one.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  # The identity Partner Center shows under Product identity. These are not secrets:
+  # they are written into the manifest of every package that is shipped.
+  IDENTITY_NAME: Sundews.Stagehand
+  PUBLISHER: CN=926D3F4B-A7C1-43CE-8671-261FB58F0956
+  PUBLISHER_DISPLAY_NAME: Sundews
+
+jobs:
+  build:
+    name: Windows ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+          - arch: arm64
+            runner: windows-11-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      # The version built into the program comes from Cargo.toml, so a release whose
+      # tag says something else would be published under the wrong number.
+      - name: Check the version
+        id: version
+        shell: pwsh
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          $cargo = Get-Content Cargo.toml -Raw
+          if ($cargo -notmatch '(?ms)^\[workspace\.package\].*?^version\s*=\s*"(\d+\.\d+\.\d+)"') {
+              throw 'Could not find the version in Cargo.toml.'
+          }
+          $version = $Matches[1]
+          if ($env:TAG) {
+              $tagged = $env:TAG -replace '^v', ''
+              if ($tagged -ne $version) {
+                  throw "The release is tagged '$env:TAG', but Cargo.toml says version $version. Tag the release v$version, or change the version in Cargo.toml first."
+              }
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      # Builds the program and packs it. The package is not signed: the Store signs what
+      # is submitted to it.
+      - name: Build and package
+        shell: pwsh
+        run: >
+          packaging/build-msix.ps1
+          -Architecture ${{ matrix.arch }}
+          -IdentityName $env:IDENTITY_NAME
+          -Publisher $env:PUBLISHER
+          -PublisherDisplayName $env:PUBLISHER_DISPLAY_NAME
+
+      # The program on its own, for running without installing anything.
+      - name: Name the program after its version
+        shell: pwsh
+        run: Copy-Item target/release/stagehand.exe "target/msix/Stagehand_${{ steps.version.outputs.version }}_${{ matrix.arch }}.exe"
+
+      - name: Upload the results
+        uses: actions/upload-artifact@v4
+        with:
+          name: stagehand-${{ matrix.arch }}
+          path: |
+            target/msix/*.msix
+            target/msix/*.exe
+          if-no-files-found: error
+
+  publish:
+    name: Attach to the release
+    needs: build
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: files
+          merge-multiple: true
+
+      - name: Attach the files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" files/* --repo "$GITHUB_REPOSITORY" --clobber
