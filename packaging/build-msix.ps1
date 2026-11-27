@@ -130,7 +130,7 @@ $makeAppx = Get-ChildItem $kits -Directory -Filter '10.*' -ErrorAction Ignore |
 if (-not $makeAppx) { throw "makeappx.exe was not found under $kits. Install the Windows SDK." }
 
 $package = Join-Path $output "Stagehand_${Version}_$Architecture.msix"
-& $makeAppx pack /d $layout /p $package /o /nv | Out-Null
+& $makeAppx pack /d $layout /p $package /o | Out-Null
 if ($LASTEXITCODE -ne 0) {
     # Run again with its output shown, which says what is wrong with the package.
     & $makeAppx pack /d $layout /p $package /o

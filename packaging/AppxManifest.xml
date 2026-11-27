@@ -10,9 +10,10 @@
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap11="http://schemas.microsoft.com/appx/manifest/uap/windows10/11"
   xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-  IgnorableNamespaces="uap desktop rescap">
+  IgnorableNamespaces="uap uap11 desktop rescap">
 
   <Identity
     Name="{{IdentityName}}"
@@ -57,8 +58,12 @@
   </Applications>
 
   <Capabilities>
+    <!--
+      Lets the Presenter Window mirror a window without Windows outlining it in yellow.
+      A general capability, declared in the uap11 namespace: declared as a restricted
+      one it is asked about, and can be turned down, when submitting to the Store.
+    -->
+    <uap11:Capability Name="graphicsCaptureWithoutBorder" />
     <rescap:Capability Name="runFullTrust" />
-    <!-- Lets the Presenter Window mirror a window without Windows outlining it in yellow. -->
-    <rescap:Capability Name="graphicsCaptureWithoutBorder" />
   </Capabilities>
 </Package>
