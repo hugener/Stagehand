@@ -32,7 +32,6 @@ export struct LaserPointerOptions {
     // Position in the list of always-on buttons below; the first one is "None".
     always-on-button: int,
     suppress-activation-button: bool,
-    auto-activate: bool,
     glow-enabled: bool,
     pen-render-when-close: bool,
     // Without its opacity, which is kept separately.
@@ -725,7 +724,7 @@ component LaserPointerPage inherits VerticalLayout {
 
     ChoiceRow {
         title: "Draw while holding";
-        description: "While the laser is on.";
+        description: "While the laser is on. This button does not reach the app underneath then.";
         choices: root.buttons;
         choice: root.options.activation-button;
         chosen(choice) => {
@@ -746,19 +745,10 @@ component LaserPointerPage inherits VerticalLayout {
     }
 
     SwitchRow {
-        title: "Keep the middle and side buttons from the app underneath";
+        title: "Keep the always-draw button from the app underneath";
         checked: root.options.suppress-activation-button;
         toggled(checked) => {
             root.options.suppress-activation-button = checked;
-            root.changed(root.options);
-        }
-    }
-
-    SwitchRow {
-        title: "Turn the laser on for the mouse when Stagehand starts";
-        checked: root.options.auto-activate;
-        toggled(checked) => {
-            root.options.auto-activate = checked;
             root.changed(root.options);
         }
     }

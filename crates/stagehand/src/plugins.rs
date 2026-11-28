@@ -165,7 +165,6 @@ pub fn laser_pointer_options(settings: &LaserPointerSettings) -> LaserPointerOpt
             .always_on_button
             .map_or(0, |button| position(&MouseButton::SPARE, &button) + 1),
         suppress_activation_button: settings.suppress_activation_button,
-        auto_activate: settings.auto_activate,
         glow_enabled: settings.glow_enabled,
         pen_render_when_close: settings.pen_render_when_close,
         color: slint::Color::from_rgb_u8(color.red, color.green, color.blue),
@@ -192,7 +191,6 @@ pub fn laser_pointer_settings(options: &LaserPointerOptions) -> LaserPointerSett
             .checked_sub(1)
             .and_then(|index| at(&MouseButton::SPARE, index)),
         suppress_activation_button: options.suppress_activation_button,
-        auto_activate: options.auto_activate,
         glow_enabled: options.glow_enabled,
         pen_render_when_close: options.pen_render_when_close,
         color: Color {
@@ -251,6 +249,29 @@ mod tests {
     }
 
     #[test]
+    fn the_laser_draws_with_the_left_button_and_nothing_always_draws_by_default() {
+        let options = laser_pointer_options(&LaserPointerSettings::default());
+
+        // The first entry of each list in the settings window: "Left" and "None".
+        assert_eq!(options.activation_button, 0);
+        assert_eq!(options.always_on_button, 0);
+    }
+
+    #[test]
+    fn the_always_draw_list_never_reaches_left_or_right() {
+        for index in -1..=10 {
+            let options = LaserPointerOptions {
+                always_on_button: index,
+                ..laser_pointer_options(&LaserPointerSettings::default())
+            };
+
+            let button = laser_pointer_settings(&options).always_on_button;
+
+            assert!(button.is_none_or(MouseButton::is_spare), "{index}");
+        }
+    }
+
+    #[test]
     fn laser_pointer_settings_survive_the_trip_through_the_settings_window() {
         let defaults = LaserPointerSettings::default();
         assert_eq!(
@@ -264,7 +285,6 @@ mod tests {
             activation_button: MouseButton::X2,
             always_on_button: Some(MouseButton::X1),
             suppress_activation_button: false,
-            auto_activate: true,
             glow_enabled: false,
             pen_render_when_close: true,
             color: Color::parse("#800A84FF").unwrap(),

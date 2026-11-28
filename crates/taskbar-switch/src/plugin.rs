@@ -46,7 +46,7 @@ impl Plugin for TaskbarSwitch {
         let settings = Arc::clone(&self.settings);
         self.watcher = Some(PostureWatcher::start(move |posture, trigger| {
             let settings = *settings.lock().unwrap_or_else(PoisonError::into_inner);
-            place_taskbar(&settings, posture, trigger);
+            place_taskbar(&settings, posture, trigger)
         })?);
         Ok(())
     }
@@ -64,14 +64,35 @@ impl Plugin for TaskbarSwitch {
     }
 }
 
-/// Runs on the watcher thread, which is the one set up to talk to the shell.
-fn place_taskbar(settings: &TaskbarSwitchSettings, posture: Posture, trigger: Trigger) {
+/// Runs on the watcher thread, which is the one set up to talk to the shell. Returns
+/// whether the taskbar is known to be where it should be, which it is not right after
+/// it was moved: the shell moves it in its own time.
+fn place_taskbar(settings: &TaskbarSwitchSettings, posture: Posture, trigger: Trigger) -> bool {
     let Some(edge) = settings.target_edge(posture, trigger) else {
-        return;
+        if trigger == Trigger::Started {
+            log::info!("leaving the taskbar where it is at start, as the settings say");
+        }
+        return true;
     };
-    match placement::apply(edge) {
-        Ok(true) => log::info!("moved the taskbar to the {}", edge.name()),
-        Ok(false) => {}
-        Err(error) => log::error!("could not move the taskbar to the {}: {error}", edge.name()),
+    // Only the placement made at the start is checked against the taskbar itself and
+    // made again: that is the one the shell may have been too busy to act on.
+    let at_start = trigger == Trigger::Started;
+    match placement::apply(edge, at_start) {
+        Ok(true) => {
+            log::info!("moved the taskbar to the {}", edge.name());
+            false
+        }
+        Ok(false) if at_start => {
+            let confirmed = placement::is_confirmed_on(edge);
+            if confirmed {
+                log::info!("the taskbar is on the {}, where it should be", edge.name());
+            }
+            confirmed
+        }
+        Ok(false) => true,
+        Err(error) => {
+            log::error!("could not move the taskbar to the {}: {error}", edge.name());
+            false
+        }
     }
 }

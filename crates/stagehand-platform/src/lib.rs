@@ -10,6 +10,7 @@ pub mod autostart;
 pub mod clock;
 pub mod package;
 pub mod paths;
+pub mod shell;
 pub mod shortcut_recorder;
 pub mod single_instance;
 pub mod window_icon;

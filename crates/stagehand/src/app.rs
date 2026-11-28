@@ -1,14 +1,16 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::error::Error;
 use std::rc::Rc;
+use std::time::Duration;
 
 use serde_json::Value;
 use slint::winit_030::WinitWindowAccessor;
 use slint::{CloseRequestResponse, ComponentHandle, ModelRc, VecModel};
 use stagehand_core::{Key, PluginHost, Settings, SettingsStore, Shortcut};
 use stagehand_laser_pointer::LaserPointerSettings;
+use stagehand_platform::shell::{self, TaskbarWatch};
 use stagehand_platform::shortcut_recorder::{self, Recorder};
-use stagehand_platform::{autostart, paths};
+use stagehand_platform::{autostart, package, paths};
 use stagehand_presenter_window::PresenterWindowSettings;
 use stagehand_taskbar_switch::TaskbarSwitchSettings;
 
@@ -24,8 +26,12 @@ pub struct App {
     store: SettingsStore,
     settings: RefCell<Settings>,
     host: RefCell<PluginHost>,
-    // Kept only so the icon stays in the tray for as long as the app runs.
-    _tray: Tray,
+    // The icon in the tray. Replaced by a new one when the taskbar has lost it.
+    tray: RefCell<Option<Tray>>,
+    _taskbar_watch: Option<TaskbarWatch>,
+    // Looks for a while after starting whether the taskbar took the icon.
+    tray_check: slint::Timer,
+    tray_checks_left: Cell<u32>,
     // Created when the settings are opened and dropped again when they are closed, so
     // the background process does not carry a window it is not showing.
     window: RefCell<Option<SettingsWindow>>,
@@ -46,13 +52,59 @@ pub fn start() -> Result<(), Box<dyn Error>> {
     }
 
     // The app may have been moved or updated since it was registered to start at
-    // sign-in; registering again points the entry at where it is now.
-    if autostart::is_enabled()
+    // sign-in; registering again points the entry at where it is now. A package is
+    // started by its own name, which does not change.
+    if !package::is_packaged()
+        && autostart::is_enabled()
         && let Err(error) = autostart::set_enabled(true)
     {
         log::error!("could not refresh the sign-in entry: {error}");
     }
 
+    let tray = create_tray()?;
+
+    // The taskbar drops every icon when it starts, which may be after Stagehand did:
+    // at sign-in, or when Explorer is restarted.
+    let taskbar_watch = TaskbarWatch::start(|| {
+        // Called from inside the message loop, which is no place to change the tray.
+        let _ = slint::invoke_from_event_loop(|| {
+            if let Some(app) = current() {
+                log::info!("the taskbar has started; putting the tray icon back");
+                app.replace_tray();
+            }
+        });
+    });
+    if let Err(error) = &taskbar_watch {
+        log::error!("could not watch for the taskbar starting: {error}");
+    }
+
+    let app = Rc::new(App {
+        store,
+        settings: RefCell::new(settings),
+        host: RefCell::new(host),
+        tray: RefCell::new(Some(tray)),
+        _taskbar_watch: taskbar_watch.ok(),
+        tray_check: slint::Timer::default(),
+        tray_checks_left: Cell::new(TRAY_CHECKS),
+        window: RefCell::new(None),
+        recorder: RefCell::new(None),
+    });
+    app.tray_check
+        .start(slint::TimerMode::Repeated, TRAY_CHECK_INTERVAL, || {
+            if let Some(app) = current() {
+                app.check_tray();
+            }
+        });
+    APP.with_borrow_mut(|slot| *slot = Some(app));
+    Ok(())
+}
+
+/// A busy taskbar, as at sign-in, can fail to take the icon without ever announcing
+/// itself afterwards. So for the first minute Stagehand looks whether the icon is there.
+const TRAY_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+const TRAY_CHECKS: u32 = 12;
+
+fn create_tray() -> Result<Tray, slint::PlatformError> {
     let tray = Tray::new()?;
     tray.set_app_icon(icon::tray());
     tray.on_open_settings(show_settings);
@@ -72,17 +124,7 @@ pub fn start() -> Result<(), Box<dyn Error>> {
         let _ = slint::quit_event_loop();
     });
     tray.show()?;
-
-    let app = Rc::new(App {
-        store,
-        settings: RefCell::new(settings),
-        host: RefCell::new(host),
-        _tray: tray,
-        window: RefCell::new(None),
-        recorder: RefCell::new(None),
-    });
-    APP.with_borrow_mut(|slot| *slot = Some(app));
-    Ok(())
+    Ok(tray)
 }
 
 /// Stops the plugins and removes the tray icon. Called once the event loop has ended.
@@ -115,6 +157,34 @@ fn current() -> Option<Rc<App>> {
 }
 
 impl App {
+    /// Takes the icon out of the tray and puts a new one in. The toolkit only asks the
+    /// taskbar to show an icon when the icon is made, so this is how to ask again.
+    fn replace_tray(&self) {
+        // The old one has to be gone before the new one is made: they are the same
+        // icon as far as the taskbar is concerned.
+        self.tray.borrow_mut().take();
+        match create_tray() {
+            Ok(tray) => *self.tray.borrow_mut() = Some(tray),
+            Err(error) => log::error!("could not put the icon in the tray: {error}"),
+        }
+        // The toolkit hands the icon to the taskbar when the event loop next turns,
+        // which it may not do for a long time when nothing else is going on.
+        slint::Timer::single_shot(Duration::ZERO, || {});
+    }
+
+    /// One of the looks, soon after starting, at whether the taskbar took the icon.
+    fn check_tray(&self) {
+        if !shell::tray_icon_window_exists() {
+            log::warn!("the taskbar did not take the tray icon; trying again");
+            self.replace_tray();
+        }
+        let left = self.tray_checks_left.get().saturating_sub(1);
+        self.tray_checks_left.set(left);
+        if left == 0 {
+            self.tray_check.stop();
+        }
+    }
+
     fn show_settings(&self) -> Result<(), slint::PlatformError> {
         if self.window.borrow().is_none() {
             let window = self.create_window()?;
@@ -319,7 +389,7 @@ impl App {
                 key,
             });
             match shortcut {
-                None => Some("Use a letter, a digit or F1 to F12 as the key.".to_owned()),
+                None => Some("Use a letter, a digit or F1 to F24 as the key.".to_owned()),
                 Some(shortcut) if !shortcut.is_usable() => {
                     Some("Hold Win, Ctrl or Alt together with a letter or a digit.".to_owned())
                 }

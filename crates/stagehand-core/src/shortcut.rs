@@ -1,19 +1,21 @@
 use std::fmt;
 
 /// The key of a keyboard shortcut, as a Windows virtual key code. Only letters, digits
-/// and F1 to F12 can be made, which are the keys that mean the same on every layout.
+/// and F1 to F24 can be made, which are the keys that mean the same on every layout.
+/// Few keyboards have F13 to F24, but they are what the button of a pen and many
+/// remapping tools send.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Key(u8);
 
 impl Key {
     const F1: u8 = 0x70;
-    const F12: u8 = 0x7B;
+    const F24: u8 = 0x87;
 
-    /// Every key, in the order a settings page lists them: A to Z, 0 to 9, F1 to F12.
+    /// Every key, in the order a settings page lists them: A to Z, 0 to 9, F1 to F24.
     pub fn all() -> impl Iterator<Item = Self> {
         (b'A'..=b'Z')
             .chain(b'0'..=b'9')
-            .chain(Self::F1..=Self::F12)
+            .chain(Self::F1..=Self::F24)
             .map(Self)
     }
 
@@ -22,7 +24,7 @@ impl Key {
     }
 
     pub fn is_function_key(self) -> bool {
-        (Self::F1..=Self::F12).contains(&self.0)
+        (Self::F1..=Self::F24).contains(&self.0)
     }
 
     pub fn name(self) -> String {
@@ -127,7 +129,15 @@ mod tests {
 
     #[test]
     fn text_that_is_not_one_key_with_modifiers_is_not_a_shortcut() {
-        for text in ["", "Win+Shift", "Ctrl+A+B", "Ctrl+Enter", "Ctrl++A", "F13"] {
+        for text in [
+            "",
+            "Win+Shift",
+            "Ctrl+A+B",
+            "Ctrl+Enter",
+            "Ctrl++A",
+            "F0",
+            "F25",
+        ] {
             assert_eq!(Shortcut::parse(text), None, "{text}");
         }
     }
@@ -144,10 +154,32 @@ mod tests {
     fn every_key_survives_being_written_and_read_back() {
         let keys: Vec<Key> = Key::all().collect();
 
-        assert_eq!(keys.len(), 26 + 10 + 12);
+        assert_eq!(keys.len(), 26 + 10 + 24);
         for key in keys {
             assert_eq!(Key::from_name(&key.name()), Some(key));
         }
+    }
+
+    #[test]
+    fn the_keys_a_pen_button_sends_are_shortcuts() {
+        // On its own, as some pens send it, and with the Windows key, as a click, a
+        // double click and a long press of a Windows Ink pen arrive.
+        for (text, virtual_key, win) in [
+            ("F24", 0x87, false),
+            ("Win+F20", 0x83, true),
+            ("Win+F19", 0x82, true),
+            ("Win+F18", 0x81, true),
+        ] {
+            let shortcut = Shortcut::parse(text).unwrap();
+
+            assert_eq!(shortcut.key.virtual_key(), virtual_key);
+            assert_eq!(shortcut.win, win);
+            assert!(shortcut.is_usable());
+            assert_eq!(shortcut.to_string(), text);
+        }
+        // F1 is not mistaken for the start of F13.
+        assert_eq!(Shortcut::parse("F1").unwrap().key.virtual_key(), 0x70);
+        assert_eq!(Shortcut::parse("f13").unwrap().key.virtual_key(), 0x7C);
     }
 
     #[test]

@@ -23,8 +23,8 @@ impl MouseButton {
     /// Every button, in the order a settings page lists them.
     pub const ALL: [Self; 5] = [Self::Left, Self::Right, Self::Middle, Self::X1, Self::X2];
 
-    /// The buttons that may be swallowed or bound permanently. Left and Right are left
-    /// out: taking either away for good would make the machine unusable.
+    /// The buttons that may be bound permanently, and swallowed while they are. Left and
+    /// Right are left out: taking either away for good would make the machine unusable.
     pub const SPARE: [Self; 3] = [Self::Middle, Self::X1, Self::X2];
 
     pub fn is_spare(self) -> bool {
@@ -109,12 +109,10 @@ pub struct LaserPointerSettings {
     /// Draws whenever it is held, with no shortcut needed. Only a spare button can be
     /// used for this.
     pub always_on_button: Option<MouseButton>,
-    /// Keep the activation button from also reaching the application underneath. Side
+    /// Keep the always-on button from also reaching the application underneath. Side
     /// buttons go back and forward in browsers, and a middle click opens links in tabs.
-    /// Left and Right are never kept back.
+    /// The button that draws while the mouse is armed is kept back whatever this says.
     pub suppress_activation_button: bool,
-    /// Arm the mouse as soon as the tool starts.
-    pub auto_activate: bool,
     pub glow_enabled: bool,
     /// Draw as soon as the pen is close enough for the screen to sense it, instead of
     /// only while the tip is touching.
@@ -138,10 +136,9 @@ impl Default for LaserPointerSettings {
         Self {
             activation_shortcut: Shortcut::parse("Win+Shift+L"),
             pen_activation_shortcut: None,
-            activation_button: MouseButton::Middle,
+            activation_button: MouseButton::Left,
             always_on_button: None,
             suppress_activation_button: true,
-            auto_activate: false,
             glow_enabled: true,
             pen_render_when_close: false,
             color: Color {
@@ -199,7 +196,6 @@ impl LaserPointerSettings {
                 "suppress_activation_button",
                 defaults.suppress_activation_button,
             ),
-            auto_activate: flag("auto_activate", defaults.auto_activate),
             glow_enabled: flag("glow_enabled", defaults.glow_enabled),
             pen_render_when_close: flag("pen_render_when_close", defaults.pen_render_when_close),
             color: text("color")
@@ -234,7 +230,6 @@ impl LaserPointerSettings {
             "activation_button": self.activation_button.stored_name(),
             "always_on_button": self.always_on_button.map_or("none", MouseButton::stored_name),
             "suppress_activation_button": self.suppress_activation_button,
-            "auto_activate": self.auto_activate,
             "glow_enabled": self.glow_enabled,
             "pen_render_when_close": self.pen_render_when_close,
             "color": self.color.to_string(),
@@ -260,7 +255,8 @@ mod tests {
             "Win+Shift+L"
         );
         assert_eq!(settings.pen_activation_shortcut, None);
-        assert_eq!(settings.activation_button, MouseButton::Middle);
+        assert_eq!(settings.activation_button, MouseButton::Left);
+        assert_eq!(settings.always_on_button, None);
         assert_eq!(settings.color.to_string(), "#CCFF2D2D");
     }
 
@@ -269,10 +265,9 @@ mod tests {
         let settings = LaserPointerSettings {
             activation_shortcut: None,
             pen_activation_shortcut: Shortcut::parse("Ctrl+Alt+F9"),
-            activation_button: MouseButton::Left,
+            activation_button: MouseButton::Right,
             always_on_button: Some(MouseButton::X2),
             suppress_activation_button: false,
-            auto_activate: true,
             glow_enabled: false,
             pen_render_when_close: true,
             color: Color::parse("#8000FF80").unwrap(),

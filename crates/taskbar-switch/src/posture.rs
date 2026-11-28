@@ -36,6 +36,12 @@ const WINDOW_CLASS: PCWSTR = w!("StagehandTaskbarSwitchPostureWatcher");
 /// folded keyboard, so the signals are read again on this interval as a safety net.
 const RECHECK_INTERVAL_MS: u32 = 5000;
 
+/// How many rechecks the placement made at start is tried again on, until it is seen
+/// to have worked. Stagehand may start while Windows is still signing in, when the
+/// shell does not yet act on being asked to move the taskbar. A minute covers that
+/// without holding on to the taskbar for long.
+const START_RETRIES: u32 = 12;
+
 /// The shell keeps its tablet posture flag here; it is the same bit the taskbar and
 /// the touch keyboard react to.
 const IMMERSIVE_SHELL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\ImmersiveShell";
@@ -58,7 +64,12 @@ impl PostureWatcher {
     /// Starts watching. `on_posture` is called once with the posture the device is in
     /// right now, and then on every change. It runs on the watcher thread, which has
     /// the Windows Runtime initialised.
-    pub fn start(on_posture: impl FnMut(Posture, Trigger) + Send + 'static) -> io::Result<Self> {
+    ///
+    /// `on_posture` returns whether it is done with what it was told. The call made at
+    /// the start is repeated for a while, as `Trigger::Started`, until it is.
+    pub fn start(
+        on_posture: impl FnMut(Posture, Trigger) -> bool + Send + 'static,
+    ) -> io::Result<Self> {
         let stop = Arc::new(Event::new()?);
         let reapply = Arc::new(Event::new()?);
         let (ready_sender, ready) = mpsc::sync_channel(1);
@@ -110,7 +121,7 @@ impl Drop for PostureWatcher {
 fn run(
     stop: &Event,
     reapply: &Event,
-    mut on_posture: impl FnMut(Posture, Trigger),
+    mut on_posture: impl FnMut(Posture, Trigger) -> bool,
     ready: &mpsc::SyncSender<io::Result<()>>,
 ) {
     let _runtime = match Runtime::initialise() {
@@ -149,7 +160,7 @@ fn run(
     let messages = handles.len() as u32;
 
     let mut posture = read_and_log(&window, shell_key.as_ref());
-    on_posture(posture, Trigger::Started);
+    let mut start_retries = retries_after(on_posture(posture, Trigger::Started), START_RETRIES);
 
     loop {
         // SAFETY: every handle in `handles` is an open event that outlives the loop.
@@ -163,7 +174,8 @@ fn run(
         };
 
         let mut reapply_requested = false;
-        let check = if result == WAIT_TIMEOUT {
+        let timed_out = result == WAIT_TIMEOUT;
+        let check = if timed_out {
             true
         } else {
             match result.0.wrapping_sub(WAIT_OBJECT_0.0) {
@@ -202,11 +214,23 @@ fn run(
         if reading.posture != posture {
             posture = reading.posture;
             reading.log();
+            // What happens from here on replaces what was wanted at the start.
+            start_retries = 0;
             on_posture(posture, Trigger::PostureChanged);
         } else if reapply_requested {
+            start_retries = 0;
             on_posture(posture, Trigger::SettingsChanged);
+        } else if timed_out && start_retries > 0 {
+            // Only on the timer, so a burst of notifications does not use them all up.
+            start_retries = retries_after(on_posture(posture, Trigger::Started), start_retries - 1);
         }
     }
+}
+
+/// How many more times the call made at the start is repeated, after one that was
+/// `done` or not and with `left` to go otherwise.
+fn retries_after(done: bool, left: u32) -> u32 {
+    if done { 0 } else { left }
 }
 
 /// Dispatches everything waiting in the thread's message queue. Returns false when the
@@ -467,6 +491,7 @@ mod tests {
         let (sender, receiver) = mpsc::channel();
         let watcher = PostureWatcher::start(move |posture, trigger| {
             let _ = sender.send((posture, trigger));
+            true
         })
         .unwrap();
 
@@ -480,6 +505,20 @@ mod tests {
 
         drop(watcher);
         assert!(receiver.recv_timeout(Duration::from_millis(100)).is_err());
+    }
+
+    #[test]
+    fn the_call_at_the_start_is_repeated_until_it_is_done_or_the_retries_run_out() {
+        assert_eq!(retries_after(true, START_RETRIES), 0);
+        assert_eq!(retries_after(false, START_RETRIES), START_RETRIES);
+
+        let mut left = retries_after(false, START_RETRIES);
+        let mut calls = 0;
+        while left > 0 {
+            calls += 1;
+            left = retries_after(false, left - 1);
+        }
+        assert_eq!(calls, START_RETRIES);
     }
 
     #[test]

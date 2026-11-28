@@ -112,12 +112,23 @@ pub fn current() -> Option<TaskbarEdge> {
 /// Docks the taskbar on `edge`. Returns whether it had to be moved.
 ///
 /// Must be called on a thread that has initialised the Windows Runtime.
-pub fn apply(edge: TaskbarEdge) -> Result<bool> {
-    if current() == Some(edge) {
+///
+/// The setting can name an edge the shell has not moved the taskbar to, as when it was
+/// written while Windows was still signing in. With `insist`, the setting is written
+/// again when the taskbar itself says it is somewhere else.
+pub fn apply(edge: TaskbarEdge, insist: bool) -> Result<bool> {
+    let elsewhere = || current_from_app_bar().is_some_and(|actual| actual != edge);
+    if current() == Some(edge) && !(insist && elsewhere()) {
         return Ok(false);
     }
     set_through_setting(edge)?;
     Ok(true)
+}
+
+/// Whether the taskbar itself says it is docked on `edge`. It says nothing while the
+/// shell is still starting.
+pub fn is_confirmed_on(edge: TaskbarEdge) -> bool {
+    current_from_app_bar() == Some(edge)
 }
 
 fn current_from_setting() -> Result<Option<TaskbarEdge>> {

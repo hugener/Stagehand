@@ -55,6 +55,29 @@ fn refusal(state: StartupTaskState) -> Option<&'static str> {
     }
 }
 
+/// What Windows says about starting at sign-in, in words for the log. `None` when not
+/// packaged, where there is no startup task to ask about.
+pub fn startup_task_state() -> Option<String> {
+    if !is_packaged() {
+        return None;
+    }
+    Some(match startup_task().and_then(|task| Ok(task.State()?)) {
+        Ok(state) => state_name(state).to_owned(),
+        Err(error) => format!("unknown ({error})"),
+    })
+}
+
+fn state_name(state: StartupTaskState) -> &'static str {
+    match state {
+        StartupTaskState::Disabled => "off",
+        StartupTaskState::DisabledByUser => "turned off in Windows",
+        StartupTaskState::Enabled => "on",
+        StartupTaskState::DisabledByPolicy => "turned off by policy",
+        StartupTaskState::EnabledByPolicy => "turned on by policy",
+        _ => "in a state this version does not know",
+    }
+}
+
 pub(crate) fn startup_task_enabled() -> bool {
     startup_task()
         .and_then(|task| Ok(task.State()?))
@@ -93,6 +116,16 @@ mod tests {
         assert!(!is_on(StartupTaskState::Disabled));
         assert!(!is_on(StartupTaskState::DisabledByUser));
         assert!(!is_on(StartupTaskState::DisabledByPolicy));
+    }
+
+    #[test]
+    fn there_is_no_startup_task_to_describe_outside_a_package() {
+        assert_eq!(startup_task_state(), None);
+        assert_eq!(state_name(StartupTaskState::Enabled), "on");
+        assert_eq!(
+            state_name(StartupTaskState::DisabledByUser),
+            "turned off in Windows"
+        );
     }
 
     #[test]

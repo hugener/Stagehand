@@ -8,7 +8,7 @@ It is at an early stage: the tools are being ported in one at a time.
 ## Tools
 
 - **Laser Pointer** – draw a fading trail on screen with the mouse or a pen while
-  presenting. Press Win+Shift+L to turn it on, then hold the middle mouse button to draw.
+  presenting. Press Win+Shift+L to turn it on, then hold the left mouse button to draw.
 - **Presenter Window** – mirrors a window into one you can share in a call, with the
   laser trail on it, so viewers see the trail without you sharing the whole screen. Point
   at a window and press Win+Ctrl+Shift+W, then share "Presenter Window" in the call.

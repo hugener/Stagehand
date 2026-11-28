@@ -218,7 +218,6 @@ fn run(
         }
     };
 
-    let auto_activate = settings.auto_activate;
     let mut overlay = Overlay::new(instance, window, settings, annotations, shared);
     overlay.update_hotkeys();
     // A button that draws without a shortcut needs the hook from the start; nothing
@@ -226,11 +225,6 @@ fn run(
     overlay.update_hook();
     OVERLAY.set(Some(overlay));
     let _ = ready.send(Ok(window.0 as isize));
-
-    if auto_activate {
-        // SAFETY: the window was created above by this thread.
-        let _ = unsafe { PostMessageW(Some(window), WM_SWITCH_MOUSE, WPARAM(0), LPARAM(0)) };
-    }
 
     let mut message = MSG::default();
     // SAFETY: `message` is a valid place for the message, and the messages are for
@@ -523,6 +517,11 @@ struct Overlay {
     pen_armed: bool,
     activation_button_held: bool,
     always_on_button_held: bool,
+    // Whether the shortcut that switches the mouse laser off again is in place.
+    mouse_shortcut_registered: bool,
+    // The buttons whose press was kept from the application, in the order of
+    // `MouseButton::ALL`, so that their release is kept from it as well.
+    withheld_buttons: [bool; MouseButton::ALL.len()],
     drawing: bool,
     render_loop_running: bool,
     visible: bool,
@@ -567,6 +566,8 @@ impl Overlay {
             pen_armed: false,
             activation_button_held: false,
             always_on_button_held: false,
+            mouse_shortcut_registered: false,
+            withheld_buttons: [false; MouseButton::ALL.len()],
             drawing: false,
             render_loop_running: false,
             visible: false,
@@ -1115,17 +1116,15 @@ impl Overlay {
                 swallow = true;
             }
         } else if let Some((button, is_down)) = classify_button(message, event.mouseData) {
-            let may_swallow = self.settings.suppress_activation_button && button.is_spare();
             // The two ways of drawing are independent and may share a button, so each
             // is tracked separately.
             if self.mouse_armed && button == self.settings.activation_button {
                 self.activation_button_held = is_down;
-                swallow = may_swallow;
             }
             if self.settings.always_on_button == Some(button) {
                 self.always_on_button_held = is_down;
-                swallow = may_swallow;
             }
+            swallow = self.withhold(button, is_down);
         }
 
         let should_draw =
@@ -1136,6 +1135,31 @@ impl Overlay {
             self.post(WM_WAKE, WAKE_END);
         }
         swallow
+    }
+
+    /// Whether this press or release of `button` is kept from the application.
+    fn withhold(&mut self, button: MouseButton, is_down: bool) -> bool {
+        let Some(withheld) = MouseButton::ALL
+            .iter()
+            .position(|other| *other == button)
+            .and_then(|index| self.withheld_buttons.get_mut(index))
+        else {
+            return false;
+        };
+        if is_down {
+            *withheld = withholds_press(
+                &self.settings,
+                self.mouse_armed,
+                self.mouse_shortcut_registered,
+                button,
+            );
+            *withheld
+        } else {
+            // A release goes where its press went, whatever has changed since: an
+            // application that saw only one of the two would think the button stuck,
+            // or act on a click it never saw begin.
+            std::mem::take(withheld)
+        }
     }
 
     fn pen_present(&self, now: u64) -> bool {
@@ -1361,8 +1385,9 @@ impl Overlay {
         }
     }
 
-    fn update_hotkeys(&self) {
+    fn update_hotkeys(&mut self) {
         self.unregister_hotkeys();
+        self.mouse_shortcut_registered = false;
         for (id, shortcut, purpose) in [
             (HOTKEY_MOUSE, self.settings.activation_shortcut, "mouse"),
             (HOTKEY_PEN, self.settings.pen_activation_shortcut, "pen"),
@@ -1385,7 +1410,10 @@ impl Overlay {
                 )
             };
             match registered {
-                Ok(()) => log::info!("laser pointer {purpose} shortcut is {shortcut}"),
+                Ok(()) => {
+                    self.mouse_shortcut_registered |= id == HOTKEY_MOUSE;
+                    log::info!("laser pointer {purpose} shortcut is {shortcut}");
+                }
                 Err(error) => log::error!(
                     "could not register {shortcut} as the {purpose} shortcut, which usually \
                      means something else is using it: {error}"
@@ -1393,6 +1421,27 @@ impl Overlay {
             }
         }
     }
+}
+
+/// Whether a press of `button` is kept from the application underneath.
+///
+/// While the mouse laser is on, the button that draws is kept back, or drawing a ring
+/// round something would also press it. Every other button works as usual. For the left
+/// and right buttons that is only safe when the shortcut that switches the laser off
+/// again is there, which is what `can_switch_off` says: a machine that cannot be clicked
+/// on cannot be put right.
+///
+/// The button that always draws is kept back when the setting says so.
+fn withholds_press(
+    settings: &LaserPointerSettings,
+    mouse_armed: bool,
+    can_switch_off: bool,
+    button: MouseButton,
+) -> bool {
+    let draws_while_armed = mouse_armed && settings.activation_button == button;
+    let always_draws = settings.always_on_button == Some(button);
+    (draws_while_armed && (can_switch_off || button.is_spare()))
+        || (always_draws && settings.suppress_activation_button && button.is_spare())
 }
 
 fn hone_active(hone: &Hone, now: u64) -> bool {
@@ -1439,6 +1488,63 @@ mod tests {
 
         assert_eq!(classify_button(WM_MOUSEMOVE, 0), None);
         assert_eq!(classify_button(WM_MOUSEWHEEL, 120 << 16), None);
+    }
+
+    #[test]
+    fn only_the_button_that_draws_is_kept_from_the_application_while_the_laser_is_on() {
+        for draws in MouseButton::ALL {
+            let settings = LaserPointerSettings {
+                activation_button: draws,
+                ..LaserPointerSettings::default()
+            };
+
+            for button in MouseButton::ALL {
+                assert_eq!(
+                    withholds_press(&settings, true, true, button),
+                    button == draws,
+                    "{button:?} with {draws:?} drawing"
+                );
+                assert!(
+                    !withholds_press(&settings, false, true, button),
+                    "{button:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn left_and_right_get_through_when_the_laser_cannot_be_switched_off() {
+        for draws in [MouseButton::Left, MouseButton::Right] {
+            let settings = LaserPointerSettings {
+                activation_button: draws,
+                ..LaserPointerSettings::default()
+            };
+
+            assert!(!withholds_press(&settings, true, false, draws), "{draws:?}");
+        }
+        // A button the machine can do without is kept back all the same.
+        let settings = LaserPointerSettings {
+            activation_button: MouseButton::Middle,
+            ..LaserPointerSettings::default()
+        };
+        assert!(withholds_press(&settings, true, false, MouseButton::Middle));
+    }
+
+    #[test]
+    fn the_always_draw_button_is_kept_back_only_when_the_setting_says_so() {
+        let kept = LaserPointerSettings {
+            always_on_button: Some(MouseButton::X2),
+            ..LaserPointerSettings::default()
+        };
+        let passed_on = LaserPointerSettings {
+            suppress_activation_button: false,
+            ..kept
+        };
+
+        assert!(withholds_press(&kept, false, true, MouseButton::X2));
+        assert!(!withholds_press(&kept, false, true, MouseButton::X1));
+        assert!(!withholds_press(&kept, false, true, MouseButton::Left));
+        assert!(!withholds_press(&passed_on, false, true, MouseButton::X2));
     }
 
     #[test]

@@ -43,10 +43,11 @@ fn main() -> ExitCode {
 fn run() -> Result<(), Box<dyn Error>> {
     // A background start is the system launching Stagehand at sign-in. Any other start
     // is the user asking for it, which opens the settings.
-    let background = std::env::args()
-        .skip(1)
-        .any(|argument| argument == autostart::BACKGROUND_ARG)
-        || package::started_at_sign_in();
+    let at_sign_in = package::started_at_sign_in();
+    let background = at_sign_in
+        || std::env::args()
+            .skip(1)
+            .any(|argument| argument == autostart::BACKGROUND_ARG);
 
     let instance = match single_instance::acquire("Stagehand")? {
         Instance::Primary(instance) => instance,
@@ -60,7 +61,25 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     // Stagehand is still useful without a log, so failing to start one is not fatal.
     let _ = logging::start();
-    log::info!("Stagehand {} started", env!("CARGO_PKG_VERSION"));
+    // A release build stops dead on a panic and has no console to say why on.
+    std::panic::set_hook(Box::new(|panic| {
+        log::error!("Stagehand stopped unexpectedly: {panic}");
+        log::logger().flush();
+    }));
+    log::info!(
+        "Stagehand {} started {}",
+        env!("CARGO_PKG_VERSION"),
+        if at_sign_in {
+            "by Windows at sign-in"
+        } else if background {
+            "in the background"
+        } else {
+            "by the user"
+        }
+    );
+    if let Some(state) = package::startup_task_state() {
+        log::info!("starting at sign-in is {state}");
+    }
 
     slint::BackendSelector::new()
         .with_winit_custom_application_handler(NoRawInput)
